@@ -147,6 +147,8 @@ print(carpeta)
 bach_size=2
 learning_rate = 0.005
 epochs=300
+patience = 10
+window = 16
 
 #crear carpeta si no existe
 if not os.path.exists(linkDeGuardado+carpeta):
@@ -165,7 +167,7 @@ with strategy.scope():
     categories = np.array([0, 35, 70, 119, 177, 220, 255])
     categoriesBalanced = np.array([18, 54, 90, 126, 162, 198, 234])
     channels = 1
-    window = 10
+    
     rows = 120
     cols = 360
 
@@ -223,7 +225,7 @@ with strategy.scope():
     autoencoder = keras.Model(autoencoder_input, decoded, name="autoencoder")
     autoencoder.compile(optimizer=optim, loss="binary_crossentropy")
 
-    patience = 10
+    
     early_stopping = EarlyStopping(monitor='val_loss',  # Métrica a monitorear
                                    patience=patience,         # Número de épocas sin mejora después de las cuales se detendrá el entrenamiento
                                    restore_best_weights=True)  # Restaurar los mejores pesos.
@@ -266,6 +268,9 @@ with strategy.scope():
         f.write("\n\n")
         "encoder",encoder.summary(print_fn=lambda x: f.write(x + '\n'))
         f.write("\n\n")
+
+    
+     
 
     encoder.save(linkDeGuardado + "/Encoder.h5")
     decoder.save(linkDeGuardado + "/Decoder.h5")
@@ -312,6 +317,7 @@ with strategy.scope():
 
     a = np.load("/media/mccdual2080/Almacenamiengto/SahirProjects/SahirReyes/dataSetAutoencoder/DatasetAutoencoder/DataSetLatentSpace/Npy/Balanced/V1/Dataset120x360GreysNewCategories.npy")
     a = a/255
+    np.save(linkDeGuardado + "/x_test_autoencoder.npy", a)
     print("a shape",a.shape)
     print("a dtype",a.dtype)
     print("a max",a.max())
