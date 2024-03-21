@@ -138,7 +138,7 @@ def get_cubes(data, h):
     return new_data
 
 
-linkDeGuardado = "Resultados/ResultadoCompleto/"
+linkDeGuardado = "Resultados/ResultadoCompletoNewCategories/"
 
 #leer una entrada de usuario por consola para variable de carpeta
 carpeta = input("Ingrese el nombre de la carpeta: ")
@@ -148,7 +148,7 @@ bach_size=2
 learning_rate = 0.005
 epochs=300
 patience = 10
-window = 16
+window = 10
 
 #crear carpeta si no existe
 if not os.path.exists(linkDeGuardado+carpeta):
