@@ -138,7 +138,7 @@ def get_cubes(data, h):
     return new_data
 
 
-linkDeGuardado = "Resultados/ResultadoCompletoNewCategories/"
+linkDeGuardado = "Resultados/ResultadoCompletoOldCategories/"
 
 #leer una entrada de usuario por consola para variable de carpeta
 carpeta = input("Ingrese el nombre de la carpeta: ")
@@ -172,9 +172,9 @@ with strategy.scope():
     cols = 360
 
 #carga de la data categorica
-    x = np.load("/media/mccdual2080/Almacenamiengto/SahirProjects/SahirReyes/dataSetAutoencoder/DatasetAutoencoder/DataSetLatentSpace/Npy/Balanced/V1/Dataset120x360GreysNewCategories.npy")
-
-    x = x/255
+    #x = np.load("/media/mccdual2080/Almacenamiengto/SahirProjects/SahirReyes/dataSetAutoencoder/DatasetAutoencoder/DataSetLatentSpace/Npy/Balanced/V1/Dataset120x360GreysNewCategories.npy")
+    x = np.load("/media/mccdual2080/Almacenamiengto/SahirProjects/SahirReyes/dataSetAutoencoder/DatasetAutoencoder/DataSetLatentSpace/Npy/Dataset120x360Greys.npy")
+    #x = x/255
     print (x.shape)
     print ("type of x: ", x.dtype)
     x_train = x[:int(len(x)*.7)]
@@ -419,7 +419,7 @@ with strategy.scope():
         model.fit(
             x_train, y_train,
             batch_size=2,
-            epochs=30,
+            epochs=50,
             validation_data=(x_validation, y_validation),
             callbacks=[early_stopping, reduce_lr]
         )
