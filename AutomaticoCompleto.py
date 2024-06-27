@@ -12,6 +12,61 @@ from keras.callbacks import EarlyStopping
 from PIL import Image
 import pandas as pd
 import sys
+import time
+import psutil
+import GPUtil
+import pandas as pd
+import time
+
+
+def monitor_resources(output_file='resource_monitor.xlsx'):
+    # Lista para almacenar los datos
+    data = []
+    # Medir uso de CPU
+    cpu_usage = psutil.cpu_percent(interval=0)
+
+    # Medir uso de memoria
+    memory_info = psutil.virtual_memory()
+    memory_usage = memory_info.percent
+
+        # Medir uso de GPU
+    gpu_data = []
+    gpus = GPUtil.getGPUs()
+    for gpu in gpus:
+        gpu_data.append({
+            'gpu_id': gpu.id,
+            'gpu_name': gpu.name,
+            'gpu_usage': gpu.load * 100,
+            'gpu_memory_usage': gpu.memoryUtil * 100,
+            'gpu_memory_total': gpu.memoryTotal,
+            'gpu_memory_free': gpu.memoryFree,
+            'gpu_memory_used': gpu.memoryUsed
+        })
+
+    # Almacenar los datos en la lista
+    timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
+    for gpu in gpu_data:
+       data = np.append(data, {
+        'timestamp': timestamp,
+        'cpu_usage': cpu_usage,
+        'memory_usage': memory_usage,
+        **gpu
+        })
+       
+
+    print("Monitoreo detenido. Guardando datos...")
+
+    # Crear un DataFrame de pandas
+    df = pd.DataFrame(data)
+
+    # Guardar los datos en un archivo Excel
+    df.to_excel(output_file, index=False)
+    print(f"Datos guardados en {output_file}")
+
+# Función para detener el monitoreo
+def stop_monitoring_resources():
+    global stop_monitoring
+    stop_monitoring = True
 
 
 def gray_quantized(img, palette):
@@ -137,8 +192,23 @@ def get_cubes(data, h):
     print(new_data.shape)
     return new_data
 
+def add_last(data, new_vals):
+    print(f"data: {data.shape} y new_val: {new_vals.shape}")
+    x_test_new = data[:,1:]
+    print(f"x_test_new: {x_test_new.shape}")
+    l = []
+    for i in range(len(x_test_new)):
+        l.append(np.append(x_test_new[i], new_vals[i]))
+    x_test_new = np.array(l).reshape(data.shape[:])
+    print("CX", x_test_new.shape)
+    return x_test_new
 
-linkDeGuardado = "Resultados/ResultadoCompletoOldCategories/"
+def create_shifted_frames_2(data):
+    x = data[:, 0 : data.shape[1] - 1, :, :]
+    y = data[:, data.shape[1]-1, :, :]
+    return x, y
+
+linkDeGuardado = "Resultados/ResultadoCompletoNewCategories/"
 
 #leer una entrada de usuario por consola para variable de carpeta
 carpeta = input("Ingrese el nombre de la carpeta: ")
@@ -149,6 +219,10 @@ learning_rate = 0.005
 epochs=300
 patience = 10
 window = 10
+horizon = 4
+imagenInicial = 300
+x_load = np.load("/media/mccdual2080/Almacenamiengto/SahirProjects/SahirReyes/dataSetAutoencoder/DatasetAutoencoder/DataSetLatentSpace/Npy/Balanced/V1/Dataset120x360GreysNewCategories.npy")
+ 
 
 #crear carpeta si no existe
 if not os.path.exists(linkDeGuardado+carpeta):
@@ -158,25 +232,44 @@ else:
 
 linkDeGuardado = linkDeGuardado+carpeta
 
+start_time = time.time()
+# Iniciar el monitoreo en un hilo separado
+monitor_thread = threading.Thread(target=monitor_resources, args=(1, 'resource_monitor.xlsx'))
+monitor_thread.start()
+monitor_thread.join()
+
+
+monitor_resources(1, 'resource_monitor.xlsx')
 
 strategy = tf.distribute.MirroredStrategy()
 print('Number of devices: {}'.format(strategy.num_replicas_in_sync))
+stop_monitoring_resources()
 with strategy.scope():
    
 
-    categories = np.array([0, 35, 70, 119, 177, 220, 255])
+    #categories = np.array([0, 35, 70, 119, 177, 220, 255])
     categoriesBalanced = np.array([18, 54, 90, 126, 162, 198, 234])
     channels = 1
     
     rows = 120
     cols = 360
+    
+    
+    '''
+    Empieza Paso 1 Entrenar autoencoder
+    '''
+    
+#carga de la data categorica ( Si es new categories dividir entre 255 )
+    x = x_load
+    #x = np.load("/media/mccdual2080/Almacenamiengto/SahirProjects/SahirReyes/dataSetAutoencoder/DatasetAutoencoder/DataSetLatentSpace/Npy/Dataset120x360Greys.npy")
+    x = x/255
+    print(" x min :", x.min())
+    print(" x max :", x.max())
 
-#carga de la data categorica
-    #x = np.load("/media/mccdual2080/Almacenamiengto/SahirProjects/SahirReyes/dataSetAutoencoder/DatasetAutoencoder/DataSetLatentSpace/Npy/Balanced/V1/Dataset120x360GreysNewCategories.npy")
-    x = np.load("/media/mccdual2080/Almacenamiengto/SahirProjects/SahirReyes/dataSetAutoencoder/DatasetAutoencoder/DataSetLatentSpace/Npy/Dataset120x360Greys.npy")
-    #x = x/255
     print (x.shape)
     print ("type of x: ", x.dtype)
+
+    
     x_train = x[:int(len(x)*.7)]
     x_test = x[int(len(x)*.7):]
     x_validation = x_train[int(len(x_train)*.8):]
@@ -193,8 +286,10 @@ with strategy.scope():
     print("colores de la imagen de validación: ", get_colors(x_validation[100]))
     print("colores de la imagen de pruebas: ", get_colors(x_test[100]))
 
+
     input_shape = (120, 360, 1)
 
+    # Definir la arquitectura del encoder
     encoder_input = keras.Input(shape=input_shape)
     print ("entrada encoder",encoder_input.shape)
     x = layers.Conv2D(8, (3, 3), activation="relu", padding="same")(encoder_input)
@@ -210,14 +305,12 @@ with strategy.scope():
     #x = layers.Conv2D(8, (3, 3), activation="relu", padding="same")(x)
     decoder_output = layers.Conv2D(1, (3, 3), activation="sigmoid", padding="same")(x)  # Output 
 
-    strategy = tf.distribute.MirroredStrategy()
+    
     # Crear el encoder y el decoder como modelos de Keras
     encoder = keras.Model(encoder_input, encoder_output, name="encoder")
     decoder = keras.Model(decoder_input, decoder_output, name="decoder")
 
     # Crear el autoencoder concatenando el encoder y el decoder
-    
-
     autoencoder_input = keras.Input(shape=input_shape)
     encoded = encoder(autoencoder_input)
     decoded = decoder(encoded)
@@ -235,17 +328,17 @@ with strategy.scope():
     # guardar en un archivo txt el historial de entrenamiento
     history = autoencoder.fit(x=x_train, y=x_train, epochs=epochs, batch_size=bach_size, validation_data=(x_validation, x_validation), callbacks=[early_stopping, reduce_lr])
 
-    with open(os.path.join(linkDeGuardado, "training_history.txt"), "w") as f:
-      f.write("Loss\n")
-      f.write(str(history.history['loss']) + '\n')
-      f.write("Validation Loss\n")
-      f.write(str(history.history['val_loss']) + '\n')
-      f.write("Learning Rate\n")
-      f.write(str(history.history['lr']) + '\n')
-      f.write("Epochs\n")
-      f.write(str(history.epoch) + '\n')
+    with open(os.path.join(linkDeGuardado, "training_history_autoencoder.txt"), "w") as f:
+        f.write("Loss\n")
+        f.write(str(history.history['loss']) + '\n')
+        f.write("Validation Loss\n")
+        f.write(str(history.history['val_loss']) + '\n')
+        f.write("Learning Rate\n")
+        f.write(str(history.history['lr']) + '\n')
+        f.write("Epochs\n")
+        f.write(str(history.epoch) + '\n')
 
-    #autoencoder.fit(x= x_train,y= x_train,epochs=epochs, batch_size=bach_size,validation_data=(x_validation, x_validation),callbacks=[early_stopping,reduce_lr])
+        f.write()
 
 
     # guardar en un archivo txt el resumen del modelo autoencoder y los datos de entrenamiento
@@ -296,24 +389,9 @@ with strategy.scope():
 
     ############################################################################################################################################
     '''
-    Empieza la estimacion
+    Empieza la parte 2 crear dataset a partir del espacio latente 
     '''
-    def add_last(data, new_vals):
-        print(f"data: {data.shape} y new_val: {new_vals.shape}")
-        x_test_new = data[:,1:]
-        print(f"x_test_new: {x_test_new.shape}")
 
-        l = []
-        for i in range(len(x_test_new)):
-            l.append(np.append(x_test_new[i], new_vals[i]))
-        x_test_new = np.array(l).reshape(data.shape[:])
-        print("CX", x_test_new.shape)
-        return x_test_new
-    
-    def create_shifted_frames_2(data):
-        x = data[:, 0 : data.shape[1] - 1, :, :]
-        y = data[:, data.shape[1]-1, :, :]
-        return x, y
 
     a = np.load("/media/mccdual2080/Almacenamiengto/SahirProjects/SahirReyes/dataSetAutoencoder/DatasetAutoencoder/DataSetLatentSpace/Npy/Balanced/V1/Dataset120x360GreysNewCategories.npy")
     a = a/255
@@ -331,11 +409,9 @@ with strategy.scope():
 
     np.save(linkDeGuardado + "/LatentSpace.npy", latent)
 
-    channels = 1
-    window = 10
-    categories = [0, 35, 70, 119, 177, 220, 255] 
-    horizon = 4
-    imagenInicial = 300
+    """
+    Empieza la parte 3 entrenar ConvLSTM2D
+    """
 
     parte = "EspacioLatente"
 
@@ -464,7 +540,7 @@ with strategy.scope():
 
     #############################################################################################################################################
     '''
-    Empieza la decodificación
+    Empieza la parte 4 decodificación
     '''
     data = np.load(linkDeGuardado+"/PredictionsConvolutionLSTM_forecast_"+str(rows)+"_"+str(cols)+"_"+parte+"_w"+str(window)+".npy")
 
@@ -485,22 +561,48 @@ with strategy.scope():
     #guardar resultado
     np.save(linkDeGuardado+"/resultadosDecoder.npy", results)
 
+    
 
     #############################################################################################################################################
+    
+
+    
     '''
-    Empieza la parte de la matriz de confusión
+    Empieza la parte 5 matriz de confusión
+    '''
     
     # matriz de confusion 
-    data = recontructed_imgs
+    data = np.load(linkDeGuardado+"/resultadosDecoder.npy")
+ 
+    x = x_load
 
-    x_test = x_test
+    rows = x.shape[1]
+    cols = x.shape[2]
 
-    y_test = x_test
+    x_2 = agroup_window(x, window)
+    
+    print(x_2.shape)
+    x_train = x_2[:int(len(x_2)*.7)]
+    x_test = x_2[int(len(x_2)*.7):]
+    x_validation = x_train[int(len(x_train)*.8):]
+    x_train = x_train[:int(len(x_train)*.8)]
+    x_train = x_train.reshape(len(x_train), window, rows, cols, channels)
+    x_validation = x_validation.reshape(len(x_validation), window, rows, cols, channels)
+    x_test = x_test.reshape(len(x_test), window, rows, cols, channels)
 
+    print("Forma de datos de entrenamiento: {}".format(x_train.shape))
+    print("Forma de datos de validación: {}".format(x_validation.shape))
+    print("Forma de datos de pruebas: {}".format(x_test.shape))
 
+    x_train, y_train = create_shifted_frames_2(x_train)
+    x_validation, y_validation = create_shifted_frames_2(x_validation)
+    x_test, y_test = create_shifted_frames_2(x_test)
 
-    #x_test = np.load("DataSetLatentSpace/Models/AutoencoderBalanced/Part0_0/x_test_mask.npy")
-    #y_test = np.load("DataSetLatentSpace/Models/AutoencoderBalanced/Part0_0/y_test_mask.npy")
+    print("Training dataset shapes: {}, {}".format(x_train.shape, y_train.shape))
+    print("Validation dataset shapes: {}, {}".format(x_validation.shape, y_validation.shape))
+    print("Test dataset shapes: {}, {}".format(x_test.shape, y_test.shape))
+
+    
 
     classes = np.array([0, 255, 220, 177, 119, 70, 35]) # 255, 220, 177, 119, 70, 35  0
     classesBalanced = np.array([ 234, 198, 162, 126, 90, 54, 18]) 
@@ -511,37 +613,42 @@ with strategy.scope():
     print(cols)
     h = 4
 
-    print(data.shape)
-    print(x_test.shape)
-    print(y_test.shape)
+    print("merged_data" ,data.shape)
+    print("x_test",x_test.shape)
+    print("y_test",y_test.shape)
+ 
+    y_test = get_cubes(y_test, h)
+   
     print("data dtype",data.dtype)
     print("x_test dtype",x_test.dtype)
     print("y_test dtype",y_test.dtype)
 
-    colors = get_colors(x_test[-10])
+    colors = get_colors_optimized(x_test[-10,0])
     print("COLORSS", colors)
     print("COLORS", colors.shape)
     
-    colorss = get_colors_optimized(data[-10])
+    colorss = get_colors_optimized(data[-10,0])
     print("COLORSS", colorss)
+    print("COLORS", colorss.shape)
     
-    y_test = y_test 
-    naive = x_test
+    naive = x_test[:-4]
+    data = data[1:-3]
     new_data = data
-    #y_real = y_test[:, -h:]*255
-    #new_data = data
-    n_real = naive*255
-    
-    #y_test = y_test[:, -h:]
-    #naive = naive
+    n_real = naive[:, -h:]
+    naive = naive[:, -h:]
+
+    print("min naive", naive.min())
+    print("max naive", naive.max())
+    print("min data", new_data.min())
+    print("max data", new_data.max())
+    print("min n_real", n_real.min())
+    print("max n_real", n_real.max())
+
     print("naive shape",naive.shape)
     print("new_data shape",new_data.shape)
     print("n real shape",n_real.shape)
     
     print("XX")
-    print(y_test.shape)
-    print(new_data.shape)
-    print(n_real.shape)
     
     print(min(new_data[0,0,60]))
     print(max(new_data[0,0,60]))
@@ -560,30 +667,31 @@ with strategy.scope():
     
     
     aux = []
-    for img in new_data:
-        # Convertir la imagen a la escala de grises cuantizada según 'categories'
-        res = gray_quantized_optimized(img, categoriesBalanced)
-        # Recolorar la imagen cuantizada según 'categories'
-        res = recolor_greys_image_optimized(res, categoriesBalanced)
-        # Añadir la imagen procesada a 'aux2'
-        aux.append(res)
-    
-    
+    for i in new_data:
+        aux2 = []
+        for j in i:
+            #res = cv2.cvtColor(j, cv2.COLOR_GRAY2RGB)
+            #res = recolor_greys_image(j, classes)
+            #rgb_quantized(res, classes_rgb)
+            #res = cv2.cvtColor(res, cv2.COLOR_RGB2GRAY)
+            res = gray_quantized_optimized(j, classesBalanced)
+            res = recolor_greys_image_optimized(res, classesBalanced)
+            aux2.append(res)
+        aux.append(np.array(aux2))
+
+
     new_data = np.array(aux)
     print("SHAPEE", new_data.shape)
-    
-    
-    
-    color_data = get_colors(new_data[-10])
+    color_data = get_colors_optimized(new_data[-10])
     print("DCOLORS", color_data)
+    new_data = new_data.reshape(new_data.shape[0],new_data.shape[1],new_data.shape[2],new_data.shape[3],1)
     
+    #y_test = y_test * 255
+    #naive = naive * 255
     
-    y_test = y_test * 255
-    naive = naive * 255
-    
-    print("YCOLORS", get_colors(y_test[-10]))
-    print("NCOLORS", get_colors(naive[-10]))
-    print("DCOLORS", get_colors(new_data[-10]))
+    print("YCOLORS", get_colors_optimized(y_test[-10]))
+    print("NCOLORS", get_colors_optimized(naive[-10]))
+    print("DCOLORS", get_colors_optimized(new_data[-10]))
     
     print("XS")
     print(f"new data shape {new_data.shape}")
@@ -596,6 +704,52 @@ with strategy.scope():
     #print("RANGO", rango)
     
     l_clas = len(classesBalanced)
+
+    fig = plt.figure(figsize=(10,10))
+    r = 3
+    c = 4
+    ac = 1
+    pos = 100
+    for i in range(h):
+        #fig.add_subplot(r, c, ac)
+        ac += 1
+        plt.imshow(y_test[pos,i], cmap='gray')
+        plt.axis('off')
+        plt.title('y_test_t+{}'.format(i+1))
+        plt.savefig(linkDeGuardado + "/y_test_t+{}.jpg".format(i+1))
+    #plt.savefig("Resultados/ResultadoCompleto/"+carpeta+"/y_test.jpg")
+    #plt.show()
+
+    fig = plt.figure(figsize=(10,10))
+    r = 3
+    c = 4
+    ac = 1
+    pos = 100
+    for i in range(h):
+        #fig.add_subplot(r, c, ac)
+        ac += 1
+        plt.imshow(new_data[pos,i], cmap='gray')
+        plt.axis('off')
+        plt.title('Pronostico_t+{}'.format(i+1))
+        plt.savefig(linkDeGuardado +"/Pronostico_t+{}.jpg".format(i+1))
+    #plt.show()
+
+
+    fig = plt.figure(figsize=(10,10))
+    r = 3
+    c = 4
+    ac = 1
+    pos = 100
+    for i in range(h):
+        #fig.add_subplot(r, c, ac)
+        ac += 1
+        plt.imshow(naive[pos,i], cmap='gray')
+        plt.axis('off')
+        plt.title('Naive_t+{}'.format(i+1))
+        plt.savefig(linkDeGuardado +"/Naive_t+{}.jpg".format(i+1))
+    #plt.show()
+
+
     rows = 120
     cols= 360
     #print 
@@ -608,24 +762,24 @@ with strategy.scope():
     cm_n = np.zeros((l_clas, l_clas), dtype=np.uint64)
     #print(cm_f)
     
-    for e in rango:
+    for e in range(y_test.shape[0]):
+        for k in range(h):
+            for i in range(rows):
+
+                for j in range(cols):
+                    #print(f"e: {e}, k: {k}, i: {i}, j: {j}")
+
+                    pos1 = np.where(classesBalanced == y_test[e, k, i, j])[0][0]
+                    pos2 = np.where(classesBalanced == new_data[e, k, i, j])[0][0]
+                    pos3 = np.where(classesBalanced == naive[e, k, i, j])[0][0]
+                    cm_f[pos1, pos2] += 1
+                    cm_n[pos1, pos3] += 1
         print(f"e: {e}")
-        for i in range(rows):
-            for j in range(cols):
-                # Identificar la posición de la clase verdadera y las predichas en las clases balanceadas
-                #print(f"e: {e}, i: {i}, j: {j}")
-                pos1 = np.where(classesBalanced == y_test[e, i, j])[0][0]
-                pos2 = np.where(classesBalanced == new_data[e, i, j])[0][0]
-                pos3 = np.where(classesBalanced == naive[e, i, j])[0][0]
-                # Actualizar las matrices de confusión
-                cm_f[pos1, pos2] += 1
-                cm_n[pos1, pos3] += 1
-    
+
     print("Matriz de confusión de pronóstico")
     print(cm_f)
     print("Matriz de confusión de naive")
     print(cm_n)
-    
     
     
     # Convert cm_f numpy array to pandas DataFrame
@@ -659,4 +813,22 @@ with strategy.scope():
         #with pd.ExcelWriter("DroughtDatasetMask/NPY61_180"+carpeta+"/cm_f_n.xlsx") as writer:
         #    df_cm_f.to_excel(writer, sheet_name='cm_f')
         #    df_cm_n.to_excel(writer, sheet_name='cm_n')
-        '''
+    
+    end_time = time.time()
+    training_duration = end_time - start_time
+    print(f"Completed in {training_duration:.2f} seconds.")
+    print(f"Training log was saved to {log_file_path}")
+    time_log_file_path = os.path.join(linkDeGuardado, "Total_time.txt")
+
+    stop_monitoring_resources()
+
+    with open(time_log_file_path, 'w') as log_file:
+        log_file.write(f"\nTraining completed in {training_duration:.2f} seconds.")
+        
+
+    
+    
+    
+    
+    
+    
